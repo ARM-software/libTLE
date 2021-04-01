@@ -68,16 +68,40 @@ libtle_spinlock_lock(libtle_spinlock_t *lck)
 "    2: "
         : "=m" (lck->lock) :: "memory", "cc");
 #elif defined(__aarch64__)
+/*
+ * Important note regarding mutexes and Arm TME
+ *
+ * Arm's recommended locking acquisition sequences
+ * using Load-Exclusive/Store-Exclusive typically rely
+ * on a LDAX (Load-Acquire Exclusive) for correct
+ * memory ordering. When this form of lock acquisition
+ * is used in conjunction with TME lock elision,
+ * mutual exclusion cannot be guaranteed.
+ *
+ * To circumvent this issue, two solutions are possible:
+ * 1. To construct a locking acquisition sequence
+ *    using ArmV8.1 Large System Extensions (LSE) atomics.
+ * 2. To add a full memory barrier (DMB) before the
+ *    first memory operation of the critical section.
+ *
+ * For the time being, we have chosen to use the
+ * latter option since TME is now supported in
+ * gem5/ruby, however, LSE atomics aren't currently
+ * implemented. When this changes, we may reevaluate
+ * this decision and implement the lock acquistion
+ * sequence in an alternative way.
+ */
     int lockval = 1;
     int tmp;
     __asm__ volatile(
 "       sevl\n"
 "       prfm    pstl1strm, %1\n"
 "    1: wfe\n"
-"    2: ldaxr   %w0, %2\n"
+"    2: ldxr   %w0, %2\n"
 "       cbnz    %w0, 1b\n"
 "       stxr    %w0, %w3, %1\n"
 "       cbnz    %w0, 2b\n"
+"       dmb sy\n"
         : "=&r" (tmp), "+Q" (lck->lock)
         : "Q" (lck->lock), "r" (lockval)
         : "memory");
